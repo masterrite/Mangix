@@ -11,6 +11,16 @@ A lightweight comic/manga reader for personal use. Written by Claude Opus 5 in R
 - Single/double page layout
 - Left-to-right/right-to-left direction switch
 
+## Installation
+
+### Installer
+
+Download the Mangix_vx.x.x_setup.exe and run. Run as administrator if you want to install in C:/Program Files.
+
+### Portable version
+
+Download the "Mangix portable.zip" and extract Mangix.exe and pdfium.dll into the same folder.
+
 ## Building
 
 ```sh
