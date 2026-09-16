@@ -15,6 +15,7 @@ A lightweight comic/manga reader for personal use. Written by Claude Opus 5 in R
 - Saves reading progress
 - Single/double page layout
 - Left-to-right/right-to-left direction switch
+- Vertical infinite scrolling
 
 ## Installation
 
