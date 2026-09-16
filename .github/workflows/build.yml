@@ -49,10 +49,21 @@ jobs:
       - name: Stage the installer inputs
         run: Copy-Item target\release\mangix.exe installer\mangix.exe
 
-      # NSIS ships with windows-latest, so there is nothing to install.
+      # NSIS is not on the runner image; Chocolatey is.
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      # choco does not put makensis on PATH for the current step, so call it
+      # by its install path.
       - name: Build the installer
         working-directory: installer
-        run: makensis mangix.nsi
+        run: |
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $makensis = "C:\Program Files\NSIS\makensis.exe"
+          }
+          & $makensis mangix.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
         with:
