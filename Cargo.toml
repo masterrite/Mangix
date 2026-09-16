@@ -13,6 +13,8 @@ slint = { version = "1.8", default-features = false, features = [
     "std",
     "backend-winit",
     "renderer-femtovg",
+    # Exposes the native window handle, which the file-drop hook needs.
+    "raw-window-handle-06",
 ] }
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
@@ -40,5 +42,16 @@ slint-build = "1.8"
 
 # Embeds the icon into the exe. Build scripts are compiled for the host, so
 # this is selected when building on Windows and absent everywhere else.
+# Slint 1.17 has DragArea/DropArea, but only for drags inside the application;
+# accepting files from Explorer is still being built upstream in winit. So the
+# window is hooked directly instead.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+] }
+raw-window-handle = "0.6"
+
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
