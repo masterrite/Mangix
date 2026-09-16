@@ -2,8 +2,6 @@ name: build
 
 # Runs only for version tags. Push v1.0.0 and it builds, packages and drafts
 # a release; ordinary commits and pull requests are left alone.
-# workflow_dispatch stays so you can trigger a build by hand when you want one
-# without cutting a tag.
 on:
   push:
     tags: ["v*"]
@@ -17,6 +15,11 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
+    # Creating a release and generating its notes both write to the repo.
+    # GITHUB_TOKEN is read-only by default, which fails with
+    # "Resource not accessible by integration".
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -96,6 +99,8 @@ jobs:
   # that does not lint or test cleanly.
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
