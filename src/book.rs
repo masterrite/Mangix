@@ -122,7 +122,9 @@ impl Book {
         }
         sort_entries(&mut entries);
         Ok(Book {
-            title: display_name(if title_from.is_dir() { dir } else { title_from }),
+            title: comic_info_in_dir(dir).unwrap_or_else(|| {
+                display_name(if title_from.is_dir() { dir } else { title_from })
+            }),
             path: dir.to_path_buf(),
             entries,
             kind: Kind::Loose,
@@ -151,8 +153,25 @@ impl Book {
         }
         sort_entries(&mut entries);
 
+        // Metadata, if the release carried any.
+        let mut title = display_name(path);
+        for index in 0..zip.len() {
+            let Ok(mut file) = zip.by_index(index) else {
+                continue;
+            };
+            if file.name().to_ascii_lowercase().ends_with("comicinfo.xml") {
+                let mut xml = String::new();
+                if file.read_to_string(&mut xml).is_ok() {
+                    if let Some(found) = title_from_comic_info(&xml) {
+                        title = found;
+                    }
+                }
+                break;
+            }
+        }
+
         Ok(Book {
-            title: display_name(path),
+            title,
             path: path.to_path_buf(),
             entries,
             kind: Kind::Zip,
@@ -222,6 +241,43 @@ impl Book {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+}
+
+/// Pulls the text of one element out of a ComicInfo.xml. The schema is flat
+/// and the files are machine-written, so a scan beats pulling in an XML crate.
+fn tag<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    let value = xml[start..end].trim();
+    (!value.is_empty()).then_some(value)
+}
+
+/// Builds a readable title out of a ComicInfo.xml, which most scene releases
+/// embed. Falls back to the file name when there is nothing useful in it.
+pub fn title_from_comic_info(xml: &str) -> Option<String> {
+    match (tag(xml, "Series"), tag(xml, "Number"), tag(xml, "Title")) {
+        (Some(series), Some(number), Some(title)) => {
+            Some(format!("{series} #{number} \u{2014} {title}"))
+        }
+        (Some(series), Some(number), None) => Some(format!("{series} #{number}")),
+        (Some(series), None, Some(title)) => Some(format!("{series} \u{2014} {title}")),
+        (Some(series), None, None) => Some(series.to_string()),
+        (None, _, Some(title)) => Some(title.to_string()),
+        _ => None,
+    }
+}
+
+/// Looks for a ComicInfo.xml beside the pages, whatever its casing.
+fn comic_info_in_dir(dir: &Path) -> Option<String> {
+    let found = std::fs::read_dir(dir).ok()?.flatten().find(|e| {
+        e.file_name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("comicinfo.xml")
+    })?;
+    let xml = std::fs::read_to_string(found.path()).ok()?;
+    title_from_comic_info(&xml)
 }
 
 /// Skips the junk that ends up inside comic archives.
@@ -320,6 +376,20 @@ impl Reader {
             Kind::Pdf => reader.pdf = Some(book.path.clone()),
         }
         Ok(reader)
+    }
+
+    /// The page's pixel size without decoding it. Image headers carry it, and
+    /// pdfium can answer from the page tree, so a whole book can be measured
+    /// in the time one page takes to decode.
+    pub fn page_size(&mut self, entry: &Entry) -> Result<(u32, u32)> {
+        if let Entry::Pdf { index } = entry {
+            let path = self.pdf.as_ref().ok_or_else(|| anyhow!("no PDF open"))?;
+            return crate::pdf::page_size(path, *index);
+        }
+        let bytes = self.read(entry)?;
+        Ok(image::ImageReader::new(std::io::Cursor::new(&bytes))
+            .with_guessed_format()?
+            .into_dimensions()?)
     }
 
     /// Produces the page image, whatever it takes: decoding a file, or asking
@@ -511,6 +581,20 @@ mod tests {
         let mut v = vec!["ch2/p1.png", "ch10/p1.png", "ch1/p2.png"];
         v.sort_by(|a, b| natural_cmp(a, b));
         assert_eq!(v, vec!["ch1/p2.png", "ch2/p1.png", "ch10/p1.png"]);
+    }
+
+    #[test]
+    fn comic_info_makes_a_title() {
+        let xml = "<ComicInfo><Series>Some Series</Series><Number>3</Number></ComicInfo>";
+        assert_eq!(
+            title_from_comic_info(xml).as_deref(),
+            Some("Some Series #3")
+        );
+        assert_eq!(title_from_comic_info("<ComicInfo></ComicInfo>"), None);
+        assert_eq!(
+            title_from_comic_info("<ComicInfo><Title>One Shot</Title></ComicInfo>").as_deref(),
+            Some("One Shot")
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub struct Settings {
     pub spread: bool,
     pub rtl: bool,
     pub rail: bool,
+    pub strip: bool,
     pub resume: bool,
 }
 
@@ -19,6 +20,7 @@ impl Default for Settings {
             spread: false,
             rtl: false,
             rail: true,
+            strip: false,
             resume: true,
         }
     }
@@ -62,6 +64,7 @@ pub fn load() -> Settings {
             "spread" => s.spread = on,
             "rtl" => s.rtl = on,
             "rail" => s.rail = on,
+            "strip" => s.strip = on,
             "resume" => s.resume = on,
             _ => {}
         }
@@ -72,8 +75,8 @@ pub fn load() -> Settings {
 pub fn save(s: &Settings) {
     let Some(file) = path() else { return };
     let text = format!(
-        "dark={}\nfit={}\nspread={}\nrtl={}\nrail={}\nresume={}\n",
-        s.dark, s.fit, s.spread, s.rtl, s.rail, s.resume
+        "dark={}\nfit={}\nspread={}\nrtl={}\nrail={}\nresume={}\nstrip={}\n",
+        s.dark, s.fit, s.spread, s.rtl, s.rail, s.resume, s.strip
     );
     let _ = std::fs::write(file, text);
 }

@@ -10,7 +10,7 @@ mod worker;
 
 use anyhow::Result;
 use book::Book;
-use slint::{ComponentHandle, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -33,6 +33,9 @@ fn main() -> Result<()> {
     let thumbs: Rc<VecModel<Thumb>> = Rc::new(VecModel::default());
     ui.set_thumbnails(ModelRc::from(thumbs.clone()));
 
+    let strip: Rc<VecModel<StripPage>> = Rc::new(VecModel::default());
+    ui.set_strip_pages(ModelRc::from(strip.clone()));
+
     let (page_tx, page_rx) = channel::<PageCmd>();
     let (thumb_tx, thumb_rx) = channel::<ThumbCmd>();
     {
@@ -50,6 +53,7 @@ fn main() -> Result<()> {
     ui.set_spread(saved.spread);
     ui.set_rtl(saved.rtl);
     ui.set_rail(saved.rail);
+    ui.set_strip(saved.strip);
     ui.set_resume(saved.resume);
 
     let bookmarks = progress::writer();
@@ -117,6 +121,7 @@ fn main() -> Result<()> {
         let state = state.clone();
         let show = show.clone();
         let thumbs = thumbs.clone();
+        let strip = strip.clone();
         let page_tx = page_tx.clone();
         let thumb_tx = thumb_tx.clone();
 
@@ -155,6 +160,18 @@ fn main() -> Result<()> {
                         idx: i as i32,
                         label: format!("{}", i + 1).into(),
                         preview: blank(),
+                        ready: false,
+                    })
+                    .collect::<Vec<_>>(),
+            );
+
+            strip.set_vec(
+                (0..count)
+                    .map(|i| StripPage {
+                        idx: i as i32,
+                        // Portrait until the measuring pass says otherwise.
+                        aspect: 0.7,
+                        image: blank(),
                         ready: false,
                     })
                     .collect::<Vec<_>>(),
@@ -272,6 +289,80 @@ fn main() -> Result<()> {
         }
     });
 
+    ui.on_want_page({
+        let ui = ui.as_weak();
+        let page_tx = page_tx.clone();
+        // Rows that have already been asked for, newest last, so the oldest
+        // can be dropped again. Without this a long book would hold every
+        // page it ever scrolled past.
+        let loaded: Rc<RefCell<std::collections::VecDeque<usize>>> = Rc::default();
+
+        move |index: i32, width: f32| {
+            let Some(ui) = ui.upgrade() else { return };
+            let index = index.max(0) as usize;
+            let width = width.max(200.0) as u32;
+
+            let mut loaded = loaded.borrow_mut();
+            if loaded.contains(&index) {
+                return;
+            }
+            loaded.push_back(index);
+            let _ = page_tx.send(PageCmd::Strip { index, width });
+
+            // Keep a window of pages around the one being read.
+            while loaded.len() > 12 {
+                if let Some(old) = loaded.pop_front() {
+                    let model = ui.get_strip_pages();
+                    if let Some(mut row) = model.row_data(old) {
+                        row.image = blank();
+                        row.ready = false;
+                        model.set_row_data(old, row);
+                    }
+                }
+            }
+        }
+    });
+
+    // Which page is under the top of the viewport. The rows were measured when
+    // the book opened, so their heights are known without having drawn them.
+    ui.on_scrolled({
+        let ui = ui.as_weak();
+        let state = state.clone();
+        let bookmarks = bookmarks.clone();
+
+        move |offset: f32, width: f32| {
+            let Some(ui) = ui.upgrade() else { return };
+            let width = width.max(1.0);
+            let model = ui.get_strip_pages();
+
+            let mut top = 0.0f32;
+            let mut showing = 0usize;
+            for row in 0..model.row_count() {
+                let Some(page) = model.row_data(row) else {
+                    break;
+                };
+                let height = width / page.aspect.max(0.15);
+                showing = row;
+                if top + height > offset {
+                    break;
+                }
+                top += height;
+            }
+
+            if state.borrow().index == showing {
+                return;
+            }
+            state.borrow_mut().index = showing;
+            ui.set_current_page(showing as i32);
+            ui.set_span(1);
+            ui.set_page_label(format!("{} of {}", showing + 1, ui.get_page_count()).into());
+
+            if let Some(book) = state.borrow().book.clone() {
+                let _ = bookmarks.send((book.path.clone(), showing));
+            }
+        }
+    });
+
     ui.on_save_settings({
         let ui = ui.as_weak();
         move || {
@@ -282,6 +373,7 @@ fn main() -> Result<()> {
                 spread: ui.get_spread(),
                 rtl: ui.get_rtl(),
                 rail: ui.get_rail(),
+                strip: ui.get_strip(),
                 resume: ui.get_resume(),
             });
         }

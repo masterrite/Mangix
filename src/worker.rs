@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// Fallback cap on a page's longest edge; the quality setting replaces it.
 const MAX_DIM: u32 = 2400;
 /// Decoded pages held in memory.
-const CACHE_PAGES: usize = 12;
+const CACHE_PAGES: usize = 6;
 /// Gutter drawn between facing pages.
 const GUTTER: u32 = 8;
 
@@ -25,6 +25,11 @@ const THUMB_H: u32 = 200;
 
 pub enum PageCmd {
     Open(Arc<Book>),
+    /// One page of the continuous view, rendered at the width it is displayed.
+    Strip {
+        index: usize,
+        width: u32,
+    },
     Show {
         index: usize,
         spread: bool,
@@ -63,6 +68,7 @@ pub fn page_worker(rx: Receiver<PageCmd>, ui: Weak<AppWindow>) {
         }
 
         let mut wanted: Option<(usize, bool, bool, bool)> = None;
+        let mut strips: Vec<(usize, u32)> = Vec::new();
         for cmd in batch {
             match cmd {
                 PageCmd::Quit => return,
@@ -78,12 +84,22 @@ pub fn page_worker(rx: Receiver<PageCmd>, ui: Weak<AppWindow>) {
                     book = Some(b);
                     wanted = None;
                 }
+                PageCmd::Strip { index, width } => strips.push((index, width)),
                 PageCmd::Show {
                     index,
                     spread,
                     rtl,
                     dark,
                 } => wanted = Some((index, spread, rtl, dark)),
+            }
+        }
+
+        if let (Some(b), Some(rd)) = (book.clone(), reader.as_mut()) {
+            for (index, width) in strips.drain(..) {
+                let Ok(page) = cache.get_sized(rd, &b, index, width) else {
+                    continue;
+                };
+                send_strip(&ui, page, index);
             }
         }
 
@@ -195,6 +211,43 @@ fn render(
         None => (first, 1),
     };
 
+    send(ui, canvas, index, span);
+    span
+}
+
+/// Scales a page to an exact display width. Pages arrive close to this
+/// already, so this is usually a small adjustment rather than real work.
+fn fit_width(img: image::DynamicImage, width: u32) -> RgbImage {
+    let width = width.max(1);
+    if img.width() == width {
+        return img.to_rgb8();
+    }
+    let height = ((img.height() as f32) * (width as f32) / (img.width() as f32)).round() as u32;
+    img.resize_exact(width, height.max(1), FilterType::Triangle)
+        .to_rgb8()
+}
+
+/// Posts one scrolling-view page into its slot in the model.
+fn send_strip(ui: &Weak<AppWindow>, canvas: Arc<RgbImage>, index: usize) {
+    let (w, h) = (canvas.width(), canvas.height());
+    let ui = ui.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(ui) = ui.upgrade() else { return };
+        let model = ui.get_strip_pages();
+        if index >= model.row_count() {
+            return;
+        }
+        let mut buffer = SharedPixelBuffer::<Rgb8Pixel>::new(w, h);
+        buffer.make_mut_bytes().copy_from_slice(canvas.as_raw());
+        let mut row = model.row_data(index).unwrap_or_default();
+        row.image = Image::from_rgb8(buffer);
+        row.ready = true;
+        model.set_row_data(index, row);
+    });
+}
+
+/// Hands a finished canvas to the UI thread, where it becomes a slint image.
+fn send(ui: &Weak<AppWindow>, canvas: Arc<RgbImage>, index: usize, span: usize) {
     let (w, h) = (canvas.width(), canvas.height());
     let ui = ui.clone();
     let _ = slint::invoke_from_event_loop(move || {
@@ -217,8 +270,6 @@ fn render(
         };
         ui.set_page_label(label.into());
     });
-
-    span
 }
 
 /// Puts two pages side by side on a flat field.
@@ -309,6 +360,25 @@ pub fn thumb_worker(rx: Receiver<ThumbCmd>, ui: Weak<AppWindow>) {
         // worker a clear run at the first page before starting.
         std::thread::sleep(std::time::Duration::from_millis(250));
 
+        // Measure first. Reading image headers is far cheaper than decoding,
+        // and until this finishes the continuous view cannot size its rows.
+        for (index, entry) in book.entries.iter().enumerate() {
+            let Ok((w, h)) = rd.page_size(entry) else {
+                continue;
+            };
+            let aspect = if h > 0 { w as f32 / h as f32 } else { 0.7 };
+            let ui = ui.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui.upgrade() else { return };
+                let model = ui.get_strip_pages();
+                if index < model.row_count() {
+                    let mut row = model.row_data(index).unwrap_or_default();
+                    row.aspect = aspect;
+                    model.set_row_data(index, row);
+                }
+            });
+        }
+
         for (index, entry) in book.entries.iter().enumerate() {
             // A newer book (or a quit) preempts the rest of this one.
             match rx.try_recv() {
@@ -323,13 +393,10 @@ pub fn thumb_worker(rx: Receiver<ThumbCmd>, ui: Weak<AppWindow>) {
             // Yield between pages so thumbnailing never starves page turns.
             std::thread::sleep(std::time::Duration::from_millis(3));
 
-            let Ok(rendered) = rd.page_image(entry, 480) else {
+            let Ok(rendered) = rd.page_image(entry, THUMB_H * 2) else {
                 continue;
             };
-            let decoded = cap_size(rendered, 480);
-            let small = image::DynamicImage::ImageRgb8(decoded)
-                .thumbnail(THUMB_W, THUMB_H)
-                .into_rgb8();
+            let small = rendered.thumbnail(THUMB_W, THUMB_H).into_rgb8();
             let (w, h) = (small.width(), small.height());
             if w == 0 || h == 0 {
                 continue;
@@ -395,6 +462,24 @@ impl Cache {
         self.spread = None;
         self.map.clear();
         self.order.clear();
+    }
+
+    /// Renders a page at a given width for the scrolling view. Deliberately
+    /// not cached here: the UI holds these, and they are sized for the screen
+    /// rather than for the page cache.
+    fn get_sized(
+        &mut self,
+        rd: &mut Reader,
+        book: &Arc<Book>,
+        index: usize,
+        width: u32,
+    ) -> anyhow::Result<Arc<RgbImage>> {
+        let entry = book
+            .entries
+            .get(index)
+            .ok_or_else(|| anyhow::anyhow!("no such page"))?;
+        let rendered = rd.page_image(entry, width.clamp(200, MAX_DIM))?;
+        Ok(Arc::new(fit_width(rendered, width)))
     }
 
     fn get(

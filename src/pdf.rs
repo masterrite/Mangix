@@ -20,6 +20,11 @@ const MISSING: &str = "reading PDFs needs the pdfium library. Put pdfium.dll (pd
                        are at github.com/bblanchon/pdfium-binaries.";
 
 enum Job {
+    Size {
+        path: PathBuf,
+        index: usize,
+        reply: Sender<Result<(u32, u32), String>>,
+    },
     Count {
         path: PathBuf,
         reply: Sender<Result<usize, String>>,
@@ -37,6 +42,21 @@ pub fn page_count(path: &Path) -> Result<usize> {
     let (reply, answer) = channel();
     submit(Job::Count {
         path: path.to_path_buf(),
+        reply,
+    })?;
+    answer
+        .recv()
+        .map_err(|_| anyhow!("the pdfium thread stopped"))?
+        .map_err(|e| anyhow!(e))
+}
+
+/// The page's size in points, without rendering it. Cheap: this is what makes
+/// a scrollable document possible before any page has been drawn.
+pub fn page_size(path: &Path, index: usize) -> Result<(u32, u32)> {
+    let (reply, answer) = channel();
+    submit(Job::Size {
+        path: path.to_path_buf(),
+        index,
         reply,
     })?;
     answer
@@ -85,6 +105,9 @@ fn run(rx: Receiver<Job>) {
         // Answer every request rather than leaving callers waiting forever.
         while let Ok(job) = rx.recv() {
             match job {
+                Job::Size { reply, .. } => {
+                    let _ = reply.send(Err(MISSING.to_string()));
+                }
                 Job::Count { reply, .. } => {
                     let _ = reply.send(Err(MISSING.to_string()));
                 }
@@ -102,6 +125,19 @@ fn run(rx: Receiver<Job>) {
 
     while let Ok(job) = rx.recv() {
         match job {
+            Job::Size { path, index, reply } => {
+                let answer = document(pdfium, &mut open, &path).and_then(|doc| {
+                    let page = doc
+                        .pages()
+                        .get(index as u16)
+                        .map_err(|e| format!("page {}: {e}", index + 1))?;
+                    Ok((
+                        page.width().value.round().max(1.0) as u32,
+                        page.height().value.round().max(1.0) as u32,
+                    ))
+                });
+                let _ = reply.send(answer);
+            }
             Job::Count { path, reply } => {
                 let answer = document(pdfium, &mut open, &path).map(|d| d.pages().len() as usize);
                 let _ = reply.send(answer);

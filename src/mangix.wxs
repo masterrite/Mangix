@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI package for Mangix. Per-user, so it installs without an admin prompt.
+
+  Build with the two shipped files beside this script, on Windows:
+    dotnet tool install --global wix --version 5.0.2
+    wix build mangix.wxs -o Mangix-1.0.0.msi
+
+  UNVERIFIED. WiX only runs on Windows, so this file has never been built
+  successfully — it is a starting point, not a working package. The NSIS
+  script one directory up is the tested route.
+
+  Note WiX v7 requires accepting the Open Source Maintenance Fee EULA before
+  it will build; v5 does not.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Mangix"
+      Manufacturer="Billy"
+      Version="1.0.0"
+      UpgradeCode="cbea4e1e-2cf4-46ed-98e7-fe12493760c0"
+      Scope="perUser"
+      Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Mangix is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Mangix" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <ComponentGroup Id="Application" Directory="INSTALLFOLDER">
+      <Component Id="MangixExe" Guid="*">
+        <File Id="mangix.exe" Source="mangix.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut"
+                    Directory="ProgramMenuFolder"
+                    Name="Mangix"
+                    Advertise="yes" />
+        </File>
+
+        <!-- The file type, then the extensions that point at it. -->
+        <ProgId Id="Mangix.Comic" Description="Comic book" Icon="mangix.exe">
+          <Extension Id="cbz" ContentType="application/vnd.comicbook+zip">
+            <Verb Id="open" Command="Open" TargetFile="mangix.exe" Argument="&quot;%1&quot;" />
+          </Extension>
+          <Extension Id="cbr" ContentType="application/vnd.comicbook-rar">
+            <Verb Id="open" Command="Open" TargetFile="mangix.exe" Argument="&quot;%1&quot;" />
+          </Extension>
+          <Extension Id="cb7">
+            <Verb Id="open" Command="Open" TargetFile="mangix.exe" Argument="&quot;%1&quot;" />
+          </Extension>
+        </ProgId>
+      </Component>
+
+      <Component Id="Pdfium" Guid="*">
+        <File Id="pdfium.dll" Source="pdfium.dll" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Mangix" Level="1">
+      <ComponentGroupRef Id="Application" />
+    </Feature>
+  </Package>
+</Wix>
