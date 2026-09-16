@@ -5,6 +5,10 @@
 //! window is hooked directly: Windows is told to accept files, and WM_DROPFILES
 //! is intercepted by a subclass that hands the path back to the UI thread.
 //!
+//! This uses `windows-sys` rather than `windows`: the same calls, declared as
+//! plain FFI instead of generated wrapper types, which is a fraction of the
+//! code to compile and link for the five functions needed here.
+//!
 //! Everything here is a no-op on other platforms.
 
 use std::path::PathBuf;
@@ -14,10 +18,11 @@ use std::sync::mpsc::Sender;
 mod imp {
     use super::*;
     use std::sync::Mutex;
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-    use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
-    use windows::Win32::UI::WindowsAndMessaging::WM_DROPFILES;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::Shell::{
+        DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass, HDROP,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::WM_DROPFILES;
 
     /// Where dropped paths go. The window procedure runs on the UI thread but
     /// outside any closure we own, so the sender has to live here.
@@ -33,14 +38,17 @@ mod imp {
         _id: usize,
         _data: usize,
     ) -> LRESULT {
-        if message == WM_DROPFILES {
-            let handle = HDROP(wparam.0 as *mut _);
+        if message != WM_DROPFILES {
+            return unsafe { DefSubclassProc(window, message, wparam, lparam) };
+        }
 
+        let handle = wparam as HDROP;
+        unsafe {
             // Only the first file: this reader opens one book at a time.
             let mut buffer = [0u16; 32768];
-            let written = DragQueryFileW(handle, 0, Some(&mut buffer)) as usize;
+            let written = DragQueryFileW(handle, 0, buffer.as_mut_ptr(), buffer.len() as u32);
             if written > 0 {
-                let path = PathBuf::from(String::from_utf16_lossy(&buffer[..written]));
+                let path = PathBuf::from(String::from_utf16_lossy(&buffer[..written as usize]));
                 if let Ok(guard) = DROPS.lock() {
                     if let Some(sender) = guard.as_ref() {
                         let _ = sender.send(path);
@@ -48,19 +56,18 @@ mod imp {
                 }
             }
             DragFinish(handle);
-            return LRESULT(0);
         }
-        DefSubclassProc(window, message, wparam, lparam)
+        0
     }
 
     pub fn accept(hwnd: isize, sender: Sender<PathBuf>) {
         if let Ok(mut guard) = DROPS.lock() {
             *guard = Some(sender);
         }
-        let window = HWND(hwnd as *mut _);
+        let window = hwnd as HWND;
         unsafe {
-            DragAcceptFiles(window, true);
-            let _ = SetWindowSubclass(window, Some(wndproc), SUBCLASS_ID, 0);
+            DragAcceptFiles(window, 1);
+            SetWindowSubclass(window, Some(wndproc), SUBCLASS_ID, 0);
         }
     }
 }
