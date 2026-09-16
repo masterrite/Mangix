@@ -1,3 +1,8 @@
+<img width="1310" height="920" alt="image" src="https://github.com/user-attachments/assets/0471ac67-1635-4208-ac23-a8e13b190091" />
+
+<img width="1310" height="920" alt="image" src="https://github.com/user-attachments/assets/3f2819bc-7f82-4940-a5de-1b9dd3d15cc7" />
+
+
 # Mangix
 
 A lightweight comic/manga reader for personal use. Written by Claude Opus 5 in Rust and [Slint](https://slint.dev) front end. Opens .cbz, .zip, and image files/folders natively. Supports .cbz, .rar, .cb7 and .7z using 7-Zip, and supports .pdf using pdfium.
