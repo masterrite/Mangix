@@ -2,6 +2,15 @@ import { ScrollView, ListView } from "std-widgets.slint";
 
 // One entry in the thumbnail rail. Filled in progressively by the thumbnail
 // worker, so `ready` tells us whether `preview` holds anything yet.
+/// One row of the continuous view. `aspect` is width/height, measured up
+/// front so the list can size every row before any page is rendered.
+export struct StripPage {
+    idx: int,
+    aspect: float,
+    image: image,
+    ready: bool,
+}
+
 export struct Thumb {
     idx: int,
     label: string,
@@ -126,6 +135,7 @@ component Separator inherits Rectangle {
 export component AppWindow inherits Window {
     in-out property <string> window-title: "Mangix";
     title: root.window-title;
+    full-screen: root.fullscreen;
     icon: @image-url("icon.png");
     background: Ink.canvas;
     preferred-width: 1180px;
@@ -146,6 +156,7 @@ export component AppWindow inherits Window {
     in-out property <bool> loading: false;
     in-out property <bool> page-pending: false;
     in-out property <[Thumb]> thumbnails: [];
+    in-out property <[StripPage]> strip-pages: [];
 
     // ---- view state ------------------------------------------------------
     // 0 = whole page, 1 = fit width, 2 = fit height, 3 = actual pixels
@@ -153,8 +164,10 @@ export component AppWindow inherits Window {
     in-out property <float> zoom: 1.0;
     in-out property <bool> spread: false;
     in-out property <bool> rtl: false;
+    in-out property <bool> strip: false;
     in-out property <bool> rail: true;
     in-out property <bool> bare: false;
+    in-out property <bool> fullscreen: false;
     in-out property <bool> resume: true;
     in-out property <bool> settings-open: false;
 
@@ -168,6 +181,10 @@ export component AppWindow inherits Window {
     callback goto-page(float);
     callback refresh();
     callback save-settings();
+    // Asked when a row scrolls into view and has no page yet.
+    callback want-page(int, float);
+    // Scroll offset and row width, so the footer can say which page is in view.
+    callback scrolled(float, float);
 
     property <bool> has-book: root.page-count > 0;
     property <length> chrome-h: root.bare ? 0px : 46px;
@@ -237,7 +254,17 @@ export component AppWindow inherits Window {
             if (e.text == Key.Home) { root.first-page(); return accept; }
             if (e.text == Key.End) { root.last-page(); return accept; }
             if (e.text == Key.Escape) {
-                if (root.settings-open) { root.settings-open = false; } else { root.bare = false; }
+                if (root.settings-open) {
+                    root.settings-open = false;
+                } else if (root.fullscreen) {
+                    root.fullscreen = false;
+                } else {
+                    root.bare = false;
+                }
+                return accept;
+            }
+            if (e.text == Key.F11) {
+                root.fullscreen = !root.fullscreen;
                 return accept;
             }
             if (e.text == ",") { root.settings-open = !root.settings-open; return accept; }
@@ -248,6 +275,12 @@ export component AppWindow inherits Window {
             if (e.text == "h") { root.set-fit(2); return accept; }
             if (e.text == "1") { root.set-fit(3); return accept; }
             if (e.text == "d") { root.spread = !root.spread; root.refresh(); return accept; }
+            if (e.text == "v") {
+                root.strip = !root.strip;
+                if (root.strip) { root.set-fit(1); }
+                root.refresh();
+                return accept;
+            }
             if (e.text == "m") { root.rtl = !root.rtl; root.refresh(); return accept; }
             if (e.text == "l") { Ink.dark = !Ink.dark; return accept; }
             if (e.text == "t") { root.rail = !root.rail; return accept; }
@@ -343,6 +376,16 @@ export component AppWindow inherits Window {
                     checked: root.spread;
                     tip: "Two-up: facing pages  (D)";
                     clicked => { root.spread = !root.spread; root.refresh(); }
+                }
+                ToolButton {
+                    label: "Continuous";
+                    checked: root.strip;
+                    tip: "Scroll pages in a strip  (V)";
+                    clicked => {
+                        root.strip = !root.strip;
+                        if (root.strip) { root.set-fit(1); }
+                        root.refresh();
+                    }
                 }
                 ToolButton {
                     label: "Right to left";
@@ -547,6 +590,47 @@ export component AppWindow inherits Window {
                 }
             }
 
+            if root.strip: strip-list := ListView {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: 100%;
+
+                changed viewport-y => {
+                    root.scrolled(-self.viewport-y / 1px, (self.visible-width - 20px) / 1px);
+                }
+
+                for p in root.strip-pages: Rectangle {
+                    // Sized from the measured aspect, so the scroll bar is
+                    // right before anything has been drawn.
+                    height: (strip-list.visible-width - 20px) / max(p.aspect, 0.15);
+                    background: transparent;
+
+                    init => {
+                        root.want-page(p.idx, (strip-list.visible-width - 20px) / 1px);
+                    }
+
+                    if p.ready: Image {
+                        x: 10px;
+                        y: 0;
+                        width: parent.width - 20px;
+                        height: 100%;
+                        source: p.image;
+                        image-fit: contain;
+                    }
+
+                    if !p.ready: Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "\{p.idx + 1}";
+                        color: Ink.faint;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
             if root.loading: Rectangle {
                 x: parent.width - self.width - 16px;
                 y: 16px;
@@ -724,9 +808,9 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 x: (parent.width - 470px) / 2;
-                y: (parent.height - 408px) / 2;
+                y: (parent.height - 448px) / 2;
                 width: 470px;
-                height: 408px;
+                height: 448px;
                 background: Ink.chrome;
                 border-radius: 10px;
                 border-width: 1px;
@@ -770,6 +854,17 @@ export component AppWindow inherits Window {
                             clicked => { root.spread = !root.spread; root.refresh(); root.save-settings(); }
                         }
                     }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Continuous"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton {
+                            label: root.strip ? "On" : "Off";
+                            checked: root.strip;
+                            pad: 14px;
+                            clicked => { root.strip = !root.strip; root.refresh(); root.save-settings(); }
+                        }
+                    }
+
                     HorizontalLayout {
                         spacing: 6px;
                         Text { text: "Right to left"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
