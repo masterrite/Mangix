@@ -3,6 +3,7 @@
 #![windows_subsystem = "windows"]
 
 mod book;
+mod drop;
 mod pdf;
 mod progress;
 mod settings;
@@ -101,6 +102,8 @@ fn main() -> Result<()> {
     // walked. That must not happen on the UI thread, so a worker does it and a
     // timer collects the result back here, where the Rc state lives.
     let (book_tx, book_rx) = channel::<anyhow::Result<(Book, usize)>>();
+    let (drop_tx, drop_rx) = channel::<PathBuf>();
+    drop::accept(ui.window(), drop_tx);
 
     let open: Rc<dyn Fn(PathBuf)> = {
         let ui = ui.as_weak();
@@ -185,11 +188,16 @@ fn main() -> Result<()> {
     };
 
     let poll = slint::Timer::default();
-    poll.start(
-        slint::TimerMode::Repeated,
-        Duration::from_millis(40),
-        move || collect(&book_rx),
-    );
+    poll.start(slint::TimerMode::Repeated, Duration::from_millis(40), {
+        let open = open.clone();
+        move || {
+            collect(&book_rx);
+            // A file dragged onto the window opens like any other.
+            if let Some(path) = drop_rx.try_iter().last() {
+                open(path);
+            }
+        }
+    });
 
     // ---- callbacks ------------------------------------------------------
     ui.on_open_file({
