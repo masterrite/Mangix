@@ -15,8 +15,8 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver};
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 use worker::{PageCmd, ThumbCmd};
 
 slint::include_modules!();
@@ -64,7 +64,9 @@ fn main() -> Result<()> {
         Rc::new(move |requested: usize| {
             let Some(ui) = ui.upgrade() else { return };
             let mut state = state.borrow_mut();
-            let Some(book) = state.book.clone() else { return };
+            let Some(book) = state.book.clone() else {
+                return;
+            };
 
             let index = requested.min(book.len().saturating_sub(1));
             state.index = index;

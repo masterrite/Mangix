@@ -6,7 +6,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff"];
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff",
+];
 
 pub fn is_image(name: &str) -> bool {
     match name.rsplit_once('.') {
@@ -28,10 +30,15 @@ fn is_archive(path: &Path) -> Option<&'static str> {
 /// Where a single page lives.
 #[derive(Clone, Debug)]
 pub enum Entry {
-    Zip { index: usize, name: String },
+    Zip {
+        index: usize,
+        name: String,
+    },
     File(PathBuf),
     /// A page of a PDF, rendered on demand rather than read as bytes.
-    Pdf { index: usize },
+    Pdf {
+        index: usize,
+    },
 }
 
 impl Entry {
@@ -348,7 +355,6 @@ impl Reader {
         }
     }
 }
-
 
 /// Runs 7-Zip if one can be found. Returns false so the caller can try the
 /// next tool, recording why this one didn't work.

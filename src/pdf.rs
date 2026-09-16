@@ -9,7 +9,7 @@
 
 use anyhow::{anyhow, Result};
 use image::DynamicImage;
-use pdfium_render::prelude::{Pdfium, PdfRenderConfig};
+use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -169,7 +169,9 @@ fn bind() -> Option<&'static Pdfium> {
 
     let bindings = places
         .iter()
-        .find_map(|dir| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir)).ok())
+        .find_map(|dir| {
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dir)).ok()
+        })
         .or_else(|| Pdfium::bind_to_system_library().ok())?;
 
     Some(&*Box::leak(Box::new(Pdfium::new(bindings))))

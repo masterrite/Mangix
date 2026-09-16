@@ -25,7 +25,12 @@ const THUMB_H: u32 = 200;
 
 pub enum PageCmd {
     Open(Arc<Book>),
-    Show { index: usize, spread: bool, rtl: bool, dark: bool },
+    Show {
+        index: usize,
+        spread: bool,
+        rtl: bool,
+        dark: bool,
+    },
     Quit,
 }
 
@@ -73,7 +78,12 @@ pub fn page_worker(rx: Receiver<PageCmd>, ui: Weak<AppWindow>) {
                     book = Some(b);
                     wanted = None;
                 }
-                PageCmd::Show { index, spread, rtl, dark } => wanted = Some((index, spread, rtl, dark)),
+                PageCmd::Show {
+                    index,
+                    spread,
+                    rtl,
+                    dark,
+                } => wanted = Some((index, spread, rtl, dark)),
             }
         }
 
@@ -83,7 +93,18 @@ pub fn page_worker(rx: Receiver<PageCmd>, ui: Weak<AppWindow>) {
             continue;
         };
 
-        let span = render(&ui, rd, &b, &mut cache, index, spread, rtl, dark);
+        let span = render(
+            &ui,
+            rd,
+            &b,
+            &mut cache,
+            View {
+                index,
+                spread,
+                rtl,
+                dark,
+            },
+        );
 
         // Read ahead, but drop it the moment a new request lands.
         for ahead in [
@@ -110,16 +131,29 @@ pub fn page_worker(rx: Receiver<PageCmd>, ui: Weak<AppWindow>) {
 
 /// Decodes and posts the page (or pair of pages) at `index`, returning how
 /// many pages ended up on screen.
+/// What the reader has been asked to show.
+#[derive(Clone, Copy)]
+struct View {
+    index: usize,
+    spread: bool,
+    rtl: bool,
+    dark: bool,
+}
+
 fn render(
     ui: &Weak<AppWindow>,
     rd: &mut Reader,
     book: &Arc<Book>,
     cache: &mut Cache,
-    index: usize,
-    spread: bool,
-    rtl: bool,
-    dark: bool,
+    view: View,
 ) -> usize {
+    let View {
+        index,
+        spread,
+        rtl,
+        dark,
+    } = view;
+
     let first = match cache.get(rd, book, index) {
         Ok(img) => img,
         Err(e) => {
@@ -236,7 +270,10 @@ fn join(left: &RgbImage, right: &RgbImage, dark: bool) -> RgbImage {
 
         row[l_row..l_row + g_row].copy_from_slice(&blank_mid);
 
-        match y.checked_sub(r_top).filter(|v| *v < right.height() as usize) {
+        match y
+            .checked_sub(r_top)
+            .filter(|v| *v < right.height() as usize)
+        {
             Some(src) => row[l_row + g_row..].copy_from_slice(&rb[src * r_row..(src + 1) * r_row]),
             None => row[l_row + g_row..].copy_from_slice(&blank_right),
         }
@@ -290,8 +327,9 @@ pub fn thumb_worker(rx: Receiver<ThumbCmd>, ui: Weak<AppWindow>) {
                 continue;
             };
             let decoded = cap_size(rendered, 480);
-            let small =
-                image::DynamicImage::ImageRgb8(decoded).thumbnail(THUMB_W, THUMB_H).into_rgb8();
+            let small = image::DynamicImage::ImageRgb8(decoded)
+                .thumbnail(THUMB_W, THUMB_H)
+                .into_rgb8();
             let (w, h) = (small.width(), small.height());
             if w == 0 || h == 0 {
                 continue;
