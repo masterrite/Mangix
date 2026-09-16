@@ -203,6 +203,13 @@ export component AppWindow inherits Window {
     property <float> scale: root.fitted * root.zoom;
     property <length> shown-w: root.page-w * 1px * root.scale;
     property <length> shown-h: root.page-h * 1px * root.scale;
+    // Range the footer slider covers. Keys and Ctrl+wheel can still go beyond.
+    property <float> zlo: 0.25;
+    property <float> zhi: 4.0;
+    property <float> zfrac: min(
+        1.0,
+        max(0.0, (root.zoom - root.zlo) / (root.zhi - root.zlo))
+    );
     property <bool> can-pan: root.shown-w > stage.width + 1px || root.shown-h > stage.height + 1px;
 
     function pan-to(to-x: length, to-y: length) {
@@ -214,6 +221,11 @@ export component AppWindow inherits Window {
         root.fit-mode = m;
         root.zoom = 1.0;
         root.pan-to(0px, 0px);
+    }
+
+    function zoom-at(fraction: float) {
+        root.zoom = root.zlo
+            + min(1.0, max(0.0, fraction)) * (root.zhi - root.zlo);
     }
 
     function scale-by(f: float) {
@@ -776,17 +788,141 @@ export component AppWindow inherits Window {
 
                 Rectangle { horizontal-stretch: 1; }
 
+                // Zoom slider. Linear from 25% to 400% of the fitted size.
+                Rectangle {
+                    min-width: 108px;
+                    max-width: 108px;
+                    min-height: 22px;
+                    max-height: 22px;
+
+                    property <float> lowest: 0.25;
+                    property <float> highest: 4.0;
+                    property <float> fraction: min(1.0, max(0.0,
+                        (root.zoom - self.lowest) / (self.highest - self.lowest)));
+
+                    Rectangle {
+                        y: (parent.height - 4px) / 2;
+                        width: 100%;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Ink.track;
+                    }
+
+                    Rectangle {
+                        x: 0;
+                        y: (parent.height - 4px) / 2;
+                        width: parent.width * parent.fraction;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Ink.mark;
+                    }
+
+                    Rectangle {
+                        x: (parent.width - 10px) * parent.fraction;
+                        y: (parent.height - 10px) / 2;
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: Ink.mark;
+                        border-width: 1px;
+                        border-color: Ink.chrome;
+                    }
+
+                    zoom-bar := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        function apply() {
+                            root.zoom = parent.lowest + (parent.highest - parent.lowest)
+                                * min(1.0, max(0.0, self.mouse-x / self.width));
+                        }
+                        clicked => { self.apply(); }
+                        moved => { if (self.pressed) { self.apply(); } }
+                        double-clicked => { root.zoom = 1.0; }
+                    }
+                }
+
                 Text {
                     text: root.rtl ? "right to left" : "";
                     font-size: 11px;
                     color: Ink.muted;
                     vertical-alignment: center;
                 }
-                Text {
-                    text: root.has-book ? "\{round(root.scale * 100)}%" : "";
-                    font-size: 11px;
-                    color: Ink.muted;
-                    vertical-alignment: center;
+
+                // Zoom. Collapses in continuous mode, where pages are always
+                // fitted to the width and there is nothing to set.
+                Rectangle {
+                    min-width: (root.has-book && !root.strip) ? 120px : 0px;
+                    max-width: self.min-width;
+                    clip: true;
+
+                    Rectangle {
+                        x: 0;
+                        y: (parent.height - 4px) / 2;
+                        width: 100%;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Ink.track;
+                    }
+
+                    Rectangle {
+                        x: 0;
+                        y: (parent.height - 4px) / 2;
+                        width: parent.width * root.zfrac;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Ink.mark;
+                    }
+
+                    Rectangle {
+                        x: parent.width * root.zfrac - 5px;
+                        y: (parent.height - 10px) / 2;
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: Ink.mark;
+                        border-width: zoom-area.has-hover ? 2px : 0px;
+                        border-color: Ink.chrome;
+                    }
+
+                    zoom-area := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.zoom-at(self.mouse-x / self.width);
+                        }
+                        moved => {
+                            if (self.pressed) {
+                                root.zoom-at(self.mouse-x / self.width);
+                            }
+                        }
+                    }
+                }
+
+                // Click the percentage to go back to the fitted size.
+                Rectangle {
+                    min-width: 40px;
+                    max-width: 40px;
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: root.has-book ? "\{round(root.scale * 100)}%" : "";
+                        font-size: 11px;
+                        color: reset-area.has-hover ? Ink.text : Ink.muted;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                    reset-area := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        enabled: root.has-book;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.zoom = 1.0;
+                            root.pan-to(0px, 0px);
+                        }
+                    }
                 }
             }
         }
