@@ -1,7 +1,7 @@
-<img width="1310" height="920" alt="image" src="https://github.com/user-attachments/assets/0471ac67-1635-4208-ac23-a8e13b190091" />
+<p align="center">
+<img width="524" height="368" alt="image" src="https://github.com/user-attachments/assets/0471ac67-1635-4208-ac23-a8e13b190091" /><img width="524" height="368" alt="image" src="https://github.com/user-attachments/assets/0c80f5ad-ad70-4f1a-9b30-1f9f0e3ccde8" />
 
-<img width="1310" height="920" alt="image" src="https://github.com/user-attachments/assets/3f2819bc-7f82-4940-a5de-1b9dd3d15cc7" />
-
+</p>
 
 # Mangix
 
