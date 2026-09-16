@@ -1,0 +1,44 @@
+[package]
+name = "mangix"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.77"
+description = "A keyboard-driven comic reader for CBZ/CBR archives and image folders"
+
+[dependencies]
+# Slint's own build script pulls in a full-featured copy of `image`, but this
+# slim one is what ends up in the binary.
+slint = { version = "1.8", default-features = false, features = [
+    "compat-1-2",
+    "std",
+    "backend-winit",
+    "renderer-femtovg",
+] }
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "bmp",
+] }
+# deflate only: "bzip2" would drag in a C library almost no CBZ uses.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+rfd = "0.15"
+anyhow = "1"
+# PDF rendering. Bound at runtime to a pdfium library sitting next to the
+# executable, so there is no C toolchain here and no library at build time.
+pdfium-render = { version = "0.8", features = ["thread_safe"] }
+
+# Alternative renderers. FemtoVG needs working OpenGL; if pages draw slowly,
+# try `--features skia` with SLINT_BACKEND=winit-skia.
+[features]
+skia = ["slint/renderer-skia"]
+software = ["slint/renderer-software"]
+
+[build-dependencies]
+slint-build = "1.8"
+
+# Embeds the icon into the exe. Build scripts are compiled for the host, so
+# this is selected when building on Windows and absent everywhere else.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

@@ -1,0 +1,840 @@
+import { ScrollView, ListView } from "std-widgets.slint";
+
+// One entry in the thumbnail rail. Filled in progressively by the thumbnail
+// worker, so `ready` tells us whether `preview` holds anything yet.
+export struct Thumb {
+    idx: int,
+    label: string,
+    preview: image,
+    ready: bool,
+}
+
+// Palette borrowed from four-colour printing: cold press ink for the chrome,
+// process magenta as the only saturated colour in the app.
+export global Ink {
+    // Flipped by the toolbar button; every colour below follows it.
+    in-out property <bool> dark: true;
+
+    out property <color> chrome: root.dark ? #191821 : #ebe8e1;
+    out property <color> raised: root.dark ? #21202b : #e1ddd4;
+    out property <color> canvas: root.dark ? #0c0b10 : #cfcac0;
+    out property <color> rule:   root.dark ? #ffffff14 : #00000018;
+    out property <color> text:   root.dark ? #e9e7e2 : #1f1e26;
+    out property <color> muted:  root.dark ? #8a8894 : #67646e;
+    out property <color> faint:  root.dark ? #5f5e68 : #8b8892;
+    out property <color> mark:   root.dark ? #d6317d : #c2286e;
+
+    out property <color> hover:  root.dark ? #ffffff14 : #00000012;
+    out property <color> press:  root.dark ? #ffffff2b : #00000024;
+    out property <color> tint:   root.dark ? #d6317d30 : #c2286e26;
+    out property <color> well:   root.dark ? #00000073 : #00000012;
+    out property <color> track:  root.dark ? #ffffff0f : #00000014;
+    out property <color> scrim:  root.dark ? #000000a6 : #ffffffcc;
+    out property <color> off:    root.dark ? #55545e : #a4a1aa;
+}
+
+component ToolButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked: false;
+    in property <bool> active: true;
+    in property <length> pad: 10px;
+    in property <length> tall: 30px;
+    in property <string> tip;
+    /// SVG path data drawn in a 16x16 box. Icons are vectors, never glyphs:
+    /// system fonts cannot be relied on to carry arrows and dingbats, and a
+    /// missing one renders as a tofu box.
+    in property <string> icon;
+    callback clicked();
+
+    // Layouts drive geometry from the min/max range, so pin both.
+    min-width: max(30px, cap.preferred-width + root.pad * 2);
+    max-width: self.min-width;
+    min-height: root.tall;
+    max-height: root.tall;
+    border-radius: 6px;
+    background: !root.active ? transparent
+        : ta.pressed ? Ink.press
+        : root.checked ? Ink.tint
+        : ta.has-hover ? Ink.hover
+        : transparent;
+    animate background { duration: 90ms; }
+
+    cap := Text {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: !root.active ? Ink.off : root.checked ? Ink.mark : Ink.text;
+    }
+
+    if root.icon != "": Path {
+        x: (root.width - 16px) / 2;
+        y: (root.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: root.icon;
+        fill: transparent;
+        stroke: !root.active ? Ink.off : root.checked ? Ink.mark : Ink.text;
+        stroke-width: 1.6px;
+    }
+
+    ta := TouchArea {
+        width: 100%;
+        height: 100%;
+        enabled: root.active;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    // Tooltip, shown below the button.
+    if root.tip != "" && ta.has-hover: Rectangle {
+        y: root.height + 6px;
+        width: hint.preferred-width + 16px;
+        height: 24px;
+        background: Ink.scrim;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Ink.rule;
+        hint := Text {
+            text: root.tip;
+            font-size: 11px;
+            color: Ink.muted;
+            width: 100%;
+            height: 100%;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component Separator inherits Rectangle {
+    min-width: 1px;
+    max-width: 1px;
+    min-height: 18px;
+    max-height: 18px;
+    background: Ink.rule;
+}
+
+export component AppWindow inherits Window {
+    in-out property <string> window-title: "Mangix";
+    title: root.window-title;
+    icon: @image-url("icon.png");
+    background: Ink.canvas;
+    preferred-width: 1180px;
+    preferred-height: 820px;
+    min-width: 560px;
+    min-height: 420px;
+
+    // ---- filled in by Rust ----------------------------------------------
+    in-out property <image> page-image;
+    in-out property <int> page-w: 0;
+    in-out property <int> page-h: 0;
+    in-out property <int> page-count: 0;
+    in-out property <int> current-page: 0;
+    in-out property <int> span: 1;
+    in-out property <string> page-label;
+    in-out property <string> book-title;
+    in-out property <string> status;
+    in-out property <bool> loading: false;
+    in-out property <bool> page-pending: false;
+    in-out property <[Thumb]> thumbnails: [];
+
+    // ---- view state ------------------------------------------------------
+    // 0 = whole page, 1 = fit width, 2 = fit height, 3 = actual pixels
+    in-out property <int> fit-mode: 0;
+    in-out property <float> zoom: 1.0;
+    in-out property <bool> spread: false;
+    in-out property <bool> rtl: false;
+    in-out property <bool> rail: true;
+    in-out property <bool> bare: false;
+    in-out property <bool> resume: true;
+    in-out property <bool> settings-open: false;
+
+    // ---- asked of Rust ---------------------------------------------------
+    callback open-file();
+    callback open-folder();
+    callback next-page();
+    callback prev-page();
+    callback first-page();
+    callback last-page();
+    callback goto-page(float);
+    callback refresh();
+    callback save-settings();
+
+    property <bool> has-book: root.page-count > 0;
+    property <length> chrome-h: root.bare ? 0px : 46px;
+    property <length> foot-h: root.bare ? 0px : 34px;
+    property <length> rail-w: (root.rail && !root.bare && root.has-book) ? 188px : 0px;
+    animate chrome-h, foot-h, rail-w { duration: 160ms; easing: ease-out; }
+
+    // How much room the page gets, and how big it ends up on screen.
+    property <length> room-w: max(1px, root.width - root.rail-w - 24px);
+    property <length> room-h: max(1px, root.height - root.chrome-h - root.foot-h - 24px);
+    property <float> fitted: (root.page-w <= 0 || root.page-h <= 0) ? 1.0
+        : root.fit-mode == 0 ? min(root.room-w / (root.page-w * 1px), root.room-h / (root.page-h * 1px))
+        : root.fit-mode == 1 ? root.room-w / (root.page-w * 1px)
+        : root.fit-mode == 2 ? root.room-h / (root.page-h * 1px)
+        : 1.0;
+    property <float> scale: root.fitted * root.zoom;
+    property <length> shown-w: root.page-w * 1px * root.scale;
+    property <length> shown-h: root.page-h * 1px * root.scale;
+    property <bool> can-pan: root.shown-w > stage.width + 1px || root.shown-h > stage.height + 1px;
+
+    function pan-to(to-x: length, to-y: length) {
+        sv.viewport-x = min(0px, max(stage.width - sv.viewport-width, to-x));
+        sv.viewport-y = min(0px, max(stage.height - sv.viewport-height, to-y));
+    }
+
+    function set-fit(m: int) {
+        root.fit-mode = m;
+        root.zoom = 1.0;
+        root.pan-to(0px, 0px);
+    }
+
+    function scale-by(f: float) {
+        root.zoom = min(8.0, max(0.08, root.zoom * f));
+    }
+
+    function turn(forward: bool) {
+        if (forward) {
+            root.next-page();
+        } else {
+            root.prev-page();
+        }
+        root.pan-to(0px, 0px);
+    }
+
+    keys := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        key-pressed(e) => {
+            // Arrows follow the screen; space and page keys follow the story.
+            if (e.text == Key.RightArrow) {
+                root.turn(!root.rtl);
+                return accept;
+            }
+            if (e.text == Key.LeftArrow) {
+                root.turn(root.rtl);
+                return accept;
+            }
+            if (e.text == Key.DownArrow || e.text == Key.PageDown || e.text == " ") {
+                root.turn(true);
+                return accept;
+            }
+            if (e.text == Key.UpArrow || e.text == Key.PageUp || e.text == Key.Backspace) {
+                root.turn(false);
+                return accept;
+            }
+            if (e.text == Key.Home) { root.first-page(); return accept; }
+            if (e.text == Key.End) { root.last-page(); return accept; }
+            if (e.text == Key.Escape) {
+                if (root.settings-open) { root.settings-open = false; } else { root.bare = false; }
+                return accept;
+            }
+            if (e.text == ",") { root.settings-open = !root.settings-open; return accept; }
+            if (e.text == "+" || e.text == "=") { root.scale-by(1.15); return accept; }
+            if (e.text == "-") { root.scale-by(1 / 1.15); return accept; }
+            if (e.text == "0") { root.set-fit(0); return accept; }
+            if (e.text == "w") { root.set-fit(1); return accept; }
+            if (e.text == "h") { root.set-fit(2); return accept; }
+            if (e.text == "1") { root.set-fit(3); return accept; }
+            if (e.text == "d") { root.spread = !root.spread; root.refresh(); return accept; }
+            if (e.text == "m") { root.rtl = !root.rtl; root.refresh(); return accept; }
+            if (e.text == "l") { Ink.dark = !Ink.dark; return accept; }
+            if (e.text == "t") { root.rail = !root.rail; return accept; }
+            if (e.text == "f") { root.bare = !root.bare; return accept; }
+            if (e.text == "o") { root.open-file(); return accept; }
+            return reject;
+        }
+
+        // ================= toolbar =================
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: root.chrome-h;
+            background: Ink.chrome;
+            clip: true;
+
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                width: 100%;
+                background: Ink.rule;
+            }
+
+            HorizontalLayout {
+                width: 100%;
+                height: 46px;
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
+
+                ToolButton {
+                    label: "Open";
+                    pad: 12px;
+                    tip: "Open a comic  (O)";
+                    clicked => { root.open-file(); }
+                }
+                ToolButton {
+                    label: "Folder";
+                    pad: 12px;
+                    tip: "Open a folder of images";
+                    clicked => { root.open-folder(); }
+                }
+
+                Separator { }
+
+                ToolButton {
+                    icon: "M 10 3 L 5 8 L 10 13";
+                    active: root.has-book;
+                    tip: "Previous";
+                    clicked => { root.turn(false); }
+                }
+                ToolButton {
+                    icon: "M 6 3 L 11 8 L 6 13";
+                    active: root.has-book;
+                    tip: "Next";
+                    clicked => { root.turn(true); }
+                }
+
+                Separator { }
+
+                ToolButton {
+                    label: "Page";
+                    checked: root.fit-mode == 0;
+                    tip: "Whole page  (0)";
+                    clicked => { root.set-fit(0); }
+                }
+                ToolButton {
+                    label: "Width";
+                    checked: root.fit-mode == 1;
+                    tip: "Fit width  (W)";
+                    clicked => { root.set-fit(1); }
+                }
+                ToolButton {
+                    label: "Height";
+                    checked: root.fit-mode == 2;
+                    tip: "Fit height  (H)";
+                    clicked => { root.set-fit(2); }
+                }
+                ToolButton {
+                    label: "1:1";
+                    checked: root.fit-mode == 3;
+                    tip: "Actual pixels  (1)";
+                    clicked => { root.set-fit(3); }
+                }
+
+                Separator { }
+
+                ToolButton {
+                    label: "Two-up";
+                    checked: root.spread;
+                    tip: "Two-up: facing pages  (D)";
+                    clicked => { root.spread = !root.spread; root.refresh(); }
+                }
+                ToolButton {
+                    label: "Right to left";
+                    checked: root.rtl;
+                    tip: "Manga order  (M)";
+                    clicked => { root.rtl = !root.rtl; root.refresh(); }
+                }
+
+                // Pushes the rest to the right edge.
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: root.book-title;
+                    color: Ink.muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 320px;
+                }
+
+                Separator { }
+
+                ToolButton {
+                    label: "Settings";
+                    pad: 12px;
+                    tip: "Defaults  (,)";
+                    checked: root.settings-open;
+                    clicked => { root.settings-open = !root.settings-open; }
+                }
+                ToolButton {
+                    label: Ink.dark ? "Light" : "Dark";
+                    pad: 12px;
+                    tip: "Switch theme  (L)";
+                    clicked => { Ink.dark = !Ink.dark; }
+                }
+                ToolButton {
+                    label: "Pages";
+                    checked: root.rail;
+                    active: root.has-book;
+                    tip: "Thumbnails  (T)";
+                    clicked => { root.rail = !root.rail; }
+                }
+                ToolButton {
+                    icon: "M 2 6 L 2 2 L 6 2 M 14 6 L 14 2 L 10 2 M 2 10 L 2 14 L 6 14 M 14 10 L 14 14 L 10 14";
+                    tip: "Hide the chrome  (F)";
+                    clicked => { root.bare = true; }
+                }
+            }
+        }
+
+        // ================= thumbnail rail =================
+        Rectangle {
+            x: 0;
+            y: root.chrome-h;
+            width: root.rail-w;
+            height: parent.height - root.chrome-h - root.foot-h;
+            background: Ink.chrome;
+            clip: true;
+
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                height: 100%;
+                background: Ink.rule;
+            }
+
+            ListView {
+                x: 0;
+                y: 0;
+                width: 187px;
+                height: 100%;
+
+                for t in root.thumbnails: Rectangle {
+                    height: 122px;
+                    background: t.idx == root.current-page ? Ink.hover : transparent;
+
+                    pick := TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { root.goto-page(t.idx); }
+                    }
+
+                    HorizontalLayout {
+                        width: 100%;
+                        height: 100%;
+                        padding: 9px;
+                        spacing: 10px;
+
+                        Rectangle {
+                            width: 74px;
+                            background: Ink.well;
+                            border-width: t.idx == root.current-page ? 2px : 1px;
+                            border-color: t.idx == root.current-page ? Ink.mark
+                                : pick.has-hover ? Ink.press : Ink.rule;
+
+                            if t.ready: Image {
+                                width: 100%;
+                                height: 100%;
+                                source: t.preview;
+                                image-fit: contain;
+                            }
+                        }
+
+                        Text {
+                            text: t.label;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            color: t.idx == root.current-page ? Ink.text : Ink.muted;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= page canvas =================
+        stage := Rectangle {
+            x: root.rail-w;
+            y: root.chrome-h;
+            width: parent.width - root.rail-w;
+            height: parent.height - root.chrome-h - root.foot-h;
+            background: Ink.canvas;
+            clip: true;
+
+            sv := ScrollView {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: 100%;
+                viewport-width: max(root.shown-w, stage.width);
+                viewport-height: max(root.shown-h, stage.height);
+
+                Image {
+                    x: (sv.viewport-width - root.shown-w) / 2;
+                    y: (sv.viewport-height - root.shown-h) / 2;
+                    width: root.shown-w;
+                    height: root.shown-h;
+                    source: root.page-image;
+                    image-fit: fill;
+                    image-rendering: smooth;
+                }
+            }
+
+            // Sits above the ScrollView so panning, wheel scrolling and
+            // click-to-turn all behave the same way.
+            reader := TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: !root.has-book ? MouseCursor.default
+                    : root.can-pan ? (self.pressed ? MouseCursor.grabbing : MouseCursor.grab)
+                    : MouseCursor.pointer;
+
+                property <length> from-x;
+                property <length> from-y;
+                property <length> vx;
+                property <length> vy;
+                property <bool> dragged: false;
+
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        self.from-x = self.mouse-x;
+                        self.from-y = self.mouse-y;
+                        self.vx = sv.viewport-x;
+                        self.vy = sv.viewport-y;
+                        self.dragged = false;
+                    }
+                }
+
+                moved => {
+                    if (self.pressed) {
+                        if (max(self.mouse-x - self.from-x, self.from-x - self.mouse-x) > 5px
+                            || max(self.mouse-y - self.from-y, self.from-y - self.mouse-y) > 5px) {
+                            self.dragged = true;
+                        }
+                        root.pan-to(self.vx + (self.mouse-x - self.from-x), self.vy + (self.mouse-y - self.from-y));
+                    }
+                }
+
+                clicked => {
+                    if (!self.dragged && root.has-book) {
+                        if (self.mouse-x < self.width * 0.32) {
+                            root.turn(root.rtl);
+                        } else if (self.mouse-x > self.width * 0.68) {
+                            root.turn(!root.rtl);
+                        } else if (root.bare) {
+                            root.bare = false;
+                        }
+                    }
+                }
+
+                scroll-event(e) => {
+                    if (e.modifiers.control) {
+                        root.scale-by(e.delta-y > 0 ? 1.1 : 1 / 1.1);
+                        return accept;
+                    }
+                    if (root.can-pan) {
+                        root.pan-to(sv.viewport-x + e.delta-x, sv.viewport-y + e.delta-y);
+                        return accept;
+                    }
+                    root.turn(e.delta-y < 0);
+                    return accept;
+                }
+            }
+
+            if root.loading: Rectangle {
+                x: parent.width - self.width - 16px;
+                y: 16px;
+                width: 84px;
+                height: 26px;
+                border-radius: 13px;
+                background: Ink.scrim;
+                Text {
+                    width: 100%;
+                    height: 100%;
+                    text: "Loading";
+                    font-size: 11px;
+                    color: Ink.muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Nothing open yet.
+            if !root.has-book: Rectangle {
+                width: 100%;
+                height: 100%;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 14px;
+
+                    Text {
+                        text: "No comic open";
+                        font-size: 26px;
+                        font-weight: 600;
+                        color: Ink.text;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Open a .cbz, .cbr or .zip archive, a single image, or a folder of pages.";
+                        font-size: 13px;
+                        color: Ink.muted;
+                        horizontal-alignment: center;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        Rectangle {
+                            width: 132px;
+                            height: 36px;
+                            border-radius: 6px;
+                            background: start.has-hover ? Ink.mark.brighter(0.15) : Ink.mark;
+                            animate background { duration: 90ms; }
+                            Text {
+                                width: 100%;
+                                height: 100%;
+                                text: "Open a comic";
+                                font-size: 13px;
+                                color: #ffffff;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            start := TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                mouse-cursor: pointer;
+                                clicked => { root.open-file(); }
+                            }
+                        }
+                        ToolButton {
+                            label: "Open a folder";
+                            pad: 14px;
+                            tall: 36px;
+                            clicked => { root.open-folder(); }
+                        }
+                    }
+                    Text {
+                        text: "Arrows or space turn the page · click the left and right thirds of a page · D for facing pages · M for right-to-left";
+                        font-size: 11px;
+                        color: Ink.faint;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ================= footer =================
+        Rectangle {
+            x: 0;
+            y: parent.height - root.foot-h;
+            width: parent.width;
+            height: root.foot-h;
+            background: Ink.chrome;
+            clip: true;
+
+            // Seek strip: the whole width of the window is the book.
+            seek := Rectangle {
+                x: 0;
+                y: 0;
+                width: 100%;
+                height: 5px;
+                background: Ink.track;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    height: 100%;
+                    width: root.page-count > 0
+                        ? parent.width * ((root.current-page + root.span) * 1.0) / (root.page-count * 1.0)
+                        : 0px;
+                    background: Ink.mark;
+                }
+
+                if seek-area.has-hover && root.has-book: Rectangle {
+                    x: seek-area.mouse-x - 1px;
+                    y: 0;
+                    width: 2px;
+                    height: 100%;
+                    background: Ink.muted;
+                }
+
+                seek-area := TouchArea {
+                    width: 100%;
+                    height: 9px;
+                    enabled: root.has-book;
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.goto-page(floor(self.mouse-x / self.width * root.page-count));
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                x: 0;
+                y: 5px;
+                width: 100%;
+                height: parent.height - 5px;
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 12px;
+
+                Text {
+                    text: root.status != "" ? root.status : root.page-label;
+                    font-size: 12px;
+                    color: root.status != "" ? Ink.mark : Ink.muted;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: root.rtl ? "right to left" : "";
+                    font-size: 11px;
+                    color: Ink.muted;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.has-book ? "\{round(root.scale * 100)}%" : "";
+                    font-size: 11px;
+                    color: Ink.muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+
+        // ================= settings =================
+        if root.settings-open: Rectangle {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            background: Ink.scrim;
+
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                clicked => { root.settings-open = false; }
+            }
+
+            Rectangle {
+                x: (parent.width - 470px) / 2;
+                y: (parent.height - 408px) / 2;
+                width: 470px;
+                height: 408px;
+                background: Ink.chrome;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Ink.rule;
+
+                // Clicks on the card itself must not dismiss it.
+                TouchArea { width: 100%; height: 100%; }
+
+                VerticalLayout {
+                    width: 100%;
+                    height: 100%;
+                    padding: 22px;
+                    spacing: 10px;
+
+                    Text { text: "Defaults"; font-size: 17px; font-weight: 600; color: Ink.text; }
+                    Text { text: "Applied every time Mangix starts."; font-size: 12px; color: Ink.muted; }
+
+                    Rectangle { min-height: 4px; max-height: 4px; }
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Theme"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton { label: "Dark"; checked: Ink.dark; clicked => { Ink.dark = true; root.save-settings(); } }
+                        ToolButton { label: "Light"; checked: !Ink.dark; clicked => { Ink.dark = false; root.save-settings(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Fit"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton { label: "Page"; checked: root.fit-mode == 0; clicked => { root.set-fit(0); root.save-settings(); } }
+                        ToolButton { label: "Width"; checked: root.fit-mode == 1; clicked => { root.set-fit(1); root.save-settings(); } }
+                        ToolButton { label: "Height"; checked: root.fit-mode == 2; clicked => { root.set-fit(2); root.save-settings(); } }
+                        ToolButton { label: "1:1"; checked: root.fit-mode == 3; clicked => { root.set-fit(3); root.save-settings(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Two-up"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton {
+                            label: root.spread ? "On" : "Off";
+                            checked: root.spread;
+                            pad: 14px;
+                            clicked => { root.spread = !root.spread; root.refresh(); root.save-settings(); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Right to left"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton {
+                            label: root.rtl ? "On" : "Off";
+                            checked: root.rtl;
+                            pad: 14px;
+                            clicked => { root.rtl = !root.rtl; root.refresh(); root.save-settings(); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Thumbnail rail"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton {
+                            label: root.rail ? "On" : "Off";
+                            checked: root.rail;
+                            pad: 14px;
+                            clicked => { root.rail = !root.rail; root.save-settings(); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: "Resume where I left off"; font-size: 13px; color: Ink.text; vertical-alignment: center; horizontal-stretch: 1; }
+                        ToolButton {
+                            label: root.resume ? "On" : "Off";
+                            checked: root.resume;
+                            pad: 14px;
+                            clicked => { root.resume = !root.resume; root.save-settings(); }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    // Slint's Royalty-free licence asks that its use be
+                    // disclosed; this is that disclosure.
+                    Text {
+                        text: "Mangix 1.0.0  \u{00b7}  Made with Slint (slint.dev)  \u{00b7}  PDF by PDFium";
+                        font-size: 11px;
+                        color: Ink.faint;
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        ToolButton {
+                            label: "Done";
+                            pad: 18px;
+                            tall: 32px;
+                            clicked => { root.settings-open = false; }
+                        }
+                    }
+                }
+            }
+        }
+
+        // A thin strip of chrome comes back on hover while reading bare.
+        if root.bare: TouchArea {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 6px;
+            clicked => { root.bare = false; }
+        }
+    }
+
+    init => {
+        keys.focus();
+    }
+}
