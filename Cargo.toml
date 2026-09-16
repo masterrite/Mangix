@@ -46,7 +46,9 @@ slint-build = "1.8"
 # accepting files from Explorer is still being built upstream in winit. So the
 # window is hooked directly instead.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
+# windows-sys, not windows: raw FFI declarations rather than generated wrapper
+# types. Same five calls, a fraction of the code to compile and link.
+windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
