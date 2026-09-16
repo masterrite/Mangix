@@ -2,6 +2,7 @@ name: build
 
 # Runs only for version tags. Push v1.0.0 and it builds, packages and drafts
 # a release; ordinary commits and pull requests are left alone.
+
 on:
   push:
     tags: ["v*"]
@@ -46,8 +47,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path pdfium | Out-Null
           tar -xzf pdfium.tgz -C pdfium
           Copy-Item pdfium\bin\pdfium.dll installer\pdfium.dll
-          # BSD-3 requires the notice to travel with the binary.
-          Copy-Item pdfium\LICENSE pdfium-LICENSE.txt
 
       - name: Stage the installer inputs
         run: Copy-Item target\release\mangix.exe installer\mangix.exe
@@ -68,20 +67,24 @@ jobs:
           & $makensis mangix.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Package the portable zip
+        run: |
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item target\release\mangix.exe portable\mangix.exe
+          Copy-Item installer\pdfium.dll portable\pdfium.dll
+          Compress-Archive -Path portable\* -DestinationPath "Mangix portable.zip" -Force
+
       - uses: actions/upload-artifact@v4
         with:
           name: mangix-windows
           path: |
             installer/Mangix-*-setup.exe
-            target/release/mangix.exe
-            installer/pdfium.dll
-            THIRD-PARTY.md
-            pdfium-LICENSE.txt
+            Mangix portable.zip
           if-no-files-found: error
 
       # Still guarded, because workflow_dispatch can run this without a tag.
-      # The installer carries both files; the loose exe and DLL are there for
-      # anyone who would rather not run an installer.
+      # The installer carries both files; the zip is for anyone who would
+      # rather not run an installer.
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -90,10 +93,7 @@ jobs:
           generate_release_notes: true
           files: |
             installer/Mangix-*-setup.exe
-            target/release/mangix.exe
-            installer/pdfium.dll
-            THIRD-PARTY.md
-            pdfium-LICENSE.txt
+            Mangix portable.zip
 
   # Runs alongside the release build so a tag is never published from a tree
   # that does not lint or test cleanly.
