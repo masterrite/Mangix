@@ -212,6 +212,17 @@ export component AppWindow inherits Window {
     );
     property <bool> can-pan: root.shown-w > stage.width + 1px || root.shown-h > stage.height + 1px;
 
+    // Row height in the rail. Kept next to the delegate that uses it.
+    property <length> rail-row: 122px;
+
+    changed current-page => {
+        rail-list.viewport-y = -min(
+            max(0px, root.current-page * root.rail-row
+                - rail-list.visible-height / 2 + root.rail-row / 2),
+            max(0px, rail-list.viewport-height - rail-list.visible-height)
+        );
+    }
+
     function pan-to(to-x: length, to-y: length) {
         sv.viewport-x = min(0px, max(stage.width - sv.viewport-width, to-x));
         sv.viewport-y = min(0px, max(stage.height - sv.viewport-height, to-y));
@@ -464,14 +475,14 @@ export component AppWindow inherits Window {
                 background: Ink.rule;
             }
 
-            ListView {
+            rail-list := ListView {
                 x: 0;
                 y: 0;
                 width: 187px;
                 height: 100%;
 
                 for t in root.thumbnails: Rectangle {
-                    height: 122px;
+                    height: root.rail-row;
                     background: t.idx == root.current-page ? Ink.hover : transparent;
 
                     pick := TouchArea {
