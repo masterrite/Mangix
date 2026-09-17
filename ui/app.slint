@@ -800,60 +800,6 @@ export component AppWindow inherits Window {
 
                 Rectangle { horizontal-stretch: 1; }
 
-                // Zoom slider. Linear from 25% to 400% of the fitted size.
-                Rectangle {
-                    min-width: 108px;
-                    max-width: 108px;
-                    min-height: 22px;
-                    max-height: 22px;
-
-                    property <float> lowest: 0.25;
-                    property <float> highest: 4.0;
-                    property <float> fraction: min(1.0, max(0.0,
-                        (root.zoom - self.lowest) / (self.highest - self.lowest)));
-
-                    Rectangle {
-                        y: (parent.height - 4px) / 2;
-                        width: 100%;
-                        height: 4px;
-                        border-radius: 2px;
-                        background: Ink.track;
-                    }
-
-                    Rectangle {
-                        x: 0;
-                        y: (parent.height - 4px) / 2;
-                        width: parent.width * parent.fraction;
-                        height: 4px;
-                        border-radius: 2px;
-                        background: Ink.mark;
-                    }
-
-                    Rectangle {
-                        x: (parent.width - 10px) * parent.fraction;
-                        y: (parent.height - 10px) / 2;
-                        width: 10px;
-                        height: 10px;
-                        border-radius: 5px;
-                        background: Ink.mark;
-                        border-width: 1px;
-                        border-color: Ink.chrome;
-                    }
-
-                    zoom-bar := TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        mouse-cursor: pointer;
-                        function apply() {
-                            root.zoom = parent.lowest + (parent.highest - parent.lowest)
-                                * min(1.0, max(0.0, self.mouse-x / self.width));
-                        }
-                        clicked => { self.apply(); }
-                        moved => { if (self.pressed) { self.apply(); } }
-                        double-clicked => { root.zoom = 1.0; }
-                    }
-                }
-
                 Text {
                     text: root.rtl ? "right to left" : "";
                     font-size: 11px;
