@@ -1,4 +1,10 @@
-;   Build it with the two shipped files sitting beside this script:
+; Mangix installer.
+;
+; Per-user install: no administrator prompt, everything under the user's own
+; profile and HKCU. That suits a personal tool and keeps SmartScreen quieter
+; than a machine-wide install would.
+;
+; Build it with the two shipped files sitting beside this script:
 ;
 ;   target\release\mangix.exe  ->  installer\mangix.exe
 ;   pdfium.dll                ->  installer\pdfium.dll
@@ -13,7 +19,11 @@ Unicode true
 !include "FileFunc.nsh"
 
 !define APP      "Mangix"
-!define VERSION  "1.0.0"
+; Passed in by the build (/DVERSION=1.2.3) so it always matches Cargo.toml.
+; The fallback is only for building this script by hand.
+!ifndef VERSION
+  !define VERSION "0.0.0"
+!endif
 !define PUBLISHER "billy"
 !define EXE      "mangix.exe"
 !define UNINST   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP}"
