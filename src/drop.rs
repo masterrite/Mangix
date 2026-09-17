@@ -26,6 +26,7 @@ use std::sync::mpsc::Sender;
 #[cfg(windows)]
 mod imp {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::Ole::RevokeDragDrop;
@@ -45,6 +46,10 @@ mod imp {
     static DROPS: Mutex<Option<Sender<PathBuf>>> = Mutex::new(None);
 
     const SUBCLASS_ID: usize = 0x4d41_4e47; // "MANG"
+
+    /// The retry loop in main may call this more than once if the first
+    /// attempt raced the window into existence. Subclass only once.
+    static HOOKED: AtomicBool = AtomicBool::new(false);
 
     unsafe extern "system" fn wndproc(
         window: HWND,
@@ -84,6 +89,9 @@ mod imp {
         if let Ok(mut guard) = DROPS.lock() {
             *guard = Some(sender);
         }
+        if HOOKED.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let window = hwnd as HWND;
         unsafe {
             // Subclass first, so nothing is missed between the two calls.
@@ -104,20 +112,31 @@ mod imp {
     }
 }
 
-/// Starts accepting dropped files. Does nothing where it isn't supported.
+/// Starts accepting dropped files.
+///
+/// Returns false when the native window does not exist yet, which is the
+/// normal state before the event loop has run: winit 0.30 can only create a
+/// window from inside a running loop, so Slint defers it and `window_handle()`
+/// has nothing to hand back. The caller is expected to try again.
 #[cfg(windows)]
-pub fn accept(window: &slint::Window, sender: Sender<PathBuf>) {
+pub fn accept(window: &slint::Window, sender: Sender<PathBuf>) -> bool {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     // Bind the slint handle: the borrow below comes out of it.
     let owner = window.window_handle();
     let Ok(handle) = owner.window_handle() else {
-        return;
+        return false;
     };
     if let RawWindowHandle::Win32(win32) = handle.as_raw() {
         imp::accept(win32.hwnd.get(), sender);
+        return true;
     }
+    false
 }
 
+/// Nothing to hook, and nothing to wait for: report done so the caller's
+/// retry loop stops immediately.
 #[cfg(not(windows))]
-pub fn accept(_window: &slint::Window, _sender: Sender<PathBuf>) {}
+pub fn accept(_window: &slint::Window, _sender: Sender<PathBuf>) -> bool {
+    true
+}

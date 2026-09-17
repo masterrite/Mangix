@@ -396,11 +396,39 @@ fn main() -> Result<()> {
         }
     }
 
-    // Slint creates the native window on show(), so there is no HWND to hook
-    // before this point: attaching the drop target earlier silently did
-    // nothing. Show, attach, then run the loop.
+    // show() does not create the native window. Slint leaves that to winit,
+    // and winit 0.30 can only build one from inside a running event loop, so
+    // the HWND does not exist until after run_event_loop() starts. Hooking
+    // here returns Err from window_handle() and silently does nothing, which
+    // is why drag-and-drop accepted the cursor but never delivered a file.
+    // Retry from inside the loop until the window is really there.
     ui.show()?;
-    drop::accept(ui.window(), drop_tx);
+
+    let hook = Rc::new(slint::Timer::default());
+    {
+        let hook_self = hook.clone();
+        let ui_weak = ui.as_weak();
+        let drop_tx = drop_tx.clone();
+        let tries = std::cell::Cell::new(0u32);
+        hook.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(50),
+            move || {
+                let Some(ui) = ui_weak.upgrade() else { return };
+                if drop::accept(ui.window(), drop_tx.clone()) {
+                    hook_self.stop();
+                    return;
+                }
+                tries.set(tries.get() + 1);
+                // Two seconds is far longer than window creation takes. Say so
+                // rather than failing quietly the way this did before.
+                if tries.get() >= 40 {
+                    hook_self.stop();
+                    ui.set_status("Drag and drop unavailable: no window handle".into());
+                }
+            },
+        );
+    }
 
     slint::run_event_loop()?;
 
