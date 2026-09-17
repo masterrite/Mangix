@@ -2,7 +2,8 @@ name: build
 
 # Runs only for version tags. Push v1.0.0 and it builds, packages and drafts
 # a release; ordinary commits and pull requests are left alone.
-
+# workflow_dispatch stays so you can trigger a build by hand when you want one
+# without cutting a tag.
 on:
   push:
     tags: ["v*"]
@@ -60,11 +61,16 @@ jobs:
       - name: Build the installer
         working-directory: installer
         run: |
+          # Single source of truth for the version: Cargo.toml.
+          $version = (Select-String -Path ..\Cargo.toml -Pattern '^version = "(.+)"' |
+                      Select-Object -First 1).Matches.Groups[1].Value
+          Write-Host "Packaging Mangix $version"
+
           $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
           if (-not (Test-Path $makensis)) {
             $makensis = "C:\Program Files\NSIS\makensis.exe"
           }
-          & $makensis mangix.nsi
+          & $makensis /DVERSION=$version mangix.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package the portable zip
@@ -90,7 +96,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          generate_release_notes: false
+          generate_release_notes: true
           files: |
             installer/Mangix-*-setup.exe
             Mangix portable.zip
