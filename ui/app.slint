@@ -216,16 +216,16 @@ export component AppWindow inherits Window {
     property <length> rail-row: 122px;
 
     changed current-page => {
-        rail-list.viewport-y = -min(
+        rail-list.content-y = -min(
             max(0px, root.current-page * root.rail-row
                 - rail-list.visible-height / 2 + root.rail-row / 2),
-            max(0px, rail-list.viewport-height - rail-list.visible-height)
+            max(0px, rail-list.content-height - rail-list.visible-height)
         );
     }
 
     function pan-to(to-x: length, to-y: length) {
-        sv.viewport-x = min(0px, max(stage.width - sv.viewport-width, to-x));
-        sv.viewport-y = min(0px, max(stage.height - sv.viewport-height, to-y));
+        sv.content-x = min(0px, max(stage.width - sv.content-width, to-x));
+        sv.content-y = min(0px, max(stage.height - sv.content-height, to-y));
     }
 
     function set-fit(m: int) {
@@ -538,12 +538,12 @@ export component AppWindow inherits Window {
                 y: 0;
                 width: 100%;
                 height: 100%;
-                viewport-width: max(root.shown-w, stage.width);
-                viewport-height: max(root.shown-h, stage.height);
+                content-width: max(root.shown-w, stage.width);
+                content-height: max(root.shown-h, stage.height);
 
                 Image {
-                    x: (sv.viewport-width - root.shown-w) / 2;
-                    y: (sv.viewport-height - root.shown-h) / 2;
+                    x: (sv.content-width - root.shown-w) / 2;
+                    y: (sv.content-height - root.shown-h) / 2;
                     width: root.shown-w;
                     height: root.shown-h;
                     source: root.page-image;
@@ -571,8 +571,8 @@ export component AppWindow inherits Window {
                     if (e.kind == PointerEventKind.down) {
                         self.from-x = self.mouse-x;
                         self.from-y = self.mouse-y;
-                        self.vx = sv.viewport-x;
-                        self.vy = sv.viewport-y;
+                        self.vx = sv.content-x;
+                        self.vy = sv.content-y;
                         self.dragged = false;
                     }
                 }
@@ -605,7 +605,7 @@ export component AppWindow inherits Window {
                         return accept;
                     }
                     if (root.can-pan) {
-                        root.pan-to(sv.viewport-x + e.delta-x, sv.viewport-y + e.delta-y);
+                        root.pan-to(sv.content-x + e.delta-x, sv.content-y + e.delta-y);
                         return accept;
                     }
                     root.turn(e.delta-y < 0);
@@ -619,8 +619,8 @@ export component AppWindow inherits Window {
                 width: 100%;
                 height: 100%;
 
-                changed viewport-y => {
-                    root.scrolled(-self.viewport-y / 1px, (self.visible-width - 20px) / 1px);
+                changed content-y => {
+                    root.scrolled(-self.content-y / 1px, (self.visible-width - 20px) / 1px);
                 }
 
                 for p in root.strip-pages: Rectangle {
