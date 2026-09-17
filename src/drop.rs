@@ -4,6 +4,8 @@
 //! another one is still being built upstream in winit. Until that lands the
 //! window is hooked directly: Windows is told to accept files, and WM_DROPFILES
 //! is intercepted by a subclass that hands the path back to the UI thread.
+//! winit's own OLE drop target has to be revoked first, or it swallows the
+//! message before the shell ever sends it.
 //!
 //! This uses `windows-sys` rather than `windows`: the same calls, declared as
 //! plain FFI instead of generated wrapper types, which is a fraction of the
@@ -22,6 +24,7 @@ mod imp {
     use windows_sys::Win32::UI::Shell::{
         DefSubclassProc, DragAcceptFiles, DragFinish, DragQueryFileW, SetWindowSubclass, HDROP,
     };
+    use windows_sys::Win32::System::Ole::RevokeDragDrop;
     use windows_sys::Win32::UI::WindowsAndMessaging::WM_DROPFILES;
 
     /// Where dropped paths go. The window procedure runs on the UI thread but
@@ -66,6 +69,13 @@ mod imp {
         }
         let window = hwnd as HWND;
         unsafe {
+            // winit registers an OLE drop target on every window it creates.
+            // An OLE target takes precedence over the shell's WM_DROPFILES, so
+            // while it is in place the message never arrives — and Slint's
+            // backend ignores the winit event, so the drop goes nowhere at
+            // all. Revoking it hands the window back to the simpler path.
+            let _ = RevokeDragDrop(window);
+
             DragAcceptFiles(window, 1);
             SetWindowSubclass(window, Some(wndproc), SUBCLASS_ID, 0);
         }
