@@ -48,6 +48,8 @@ fn main() -> Result<()> {
         std::thread::spawn(move || worker::thumb_worker(thumb_rx, handle));
     }
 
+    ui.set_version(env!("CARGO_PKG_VERSION").into());
+
     let saved = settings::load();
     ui.global::<Ink>().set_dark(saved.dark);
     ui.set_fit_mode(saved.fit);
@@ -103,7 +105,6 @@ fn main() -> Result<()> {
     // timer collects the result back here, where the Rc state lives.
     let (book_tx, book_rx) = channel::<anyhow::Result<(Book, usize)>>();
     let (drop_tx, drop_rx) = channel::<PathBuf>();
-    drop::accept(ui.window(), drop_tx);
 
     let open: Rc<dyn Fn(PathBuf)> = {
         let ui = ui.as_weak();
@@ -395,7 +396,13 @@ fn main() -> Result<()> {
         }
     }
 
-    ui.run()?;
+    // Slint creates the native window on show(), so there is no HWND to hook
+    // before this point: attaching the drop target earlier silently did
+    // nothing. Show, attach, then run the loop.
+    ui.show()?;
+    drop::accept(ui.window(), drop_tx);
+
+    slint::run_event_loop()?;
 
     let _ = page_tx.send(PageCmd::Quit);
     let _ = thumb_tx.send(ThumbCmd::Quit);
