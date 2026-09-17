@@ -50,6 +50,10 @@ slint-build = "1.8"
 # types. Same five calls, a fraction of the code to compile and link.
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    # RevokeDragDrop: winit registers its own OLE drop target on the window and
+    # that suppresses WM_DROPFILES, so it has to be revoked before the shell's
+    # DragAcceptFiles path will fire. See src/drop.rs.
+    "Win32_System_Ole",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
 ] }
