@@ -134,6 +134,7 @@ component Separator inherits Rectangle {
 
 export component AppWindow inherits Window {
     in-out property <string> window-title: "Mangix";
+    in-out property <string> version;
     title: root.window-title;
     full-screen: root.fullscreen;
     icon: @image-url("icon.png");
@@ -1048,7 +1049,7 @@ export component AppWindow inherits Window {
                     // Slint's Royalty-free licence asks that its use be
                     // disclosed; this is that disclosure.
                     Text {
-                        text: "Mangix 1.0.0  \u{00b7}  Made with Slint (slint.dev)  \u{00b7}  PDF by PDFium";
+                        text: "Mangix \{root.version}  \u{00b7}  Made with Slint (slint.dev)  \u{00b7}  PDF by PDFium";
                         font-size: 11px;
                         color: Ink.faint;
                     }
