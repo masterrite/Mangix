@@ -71,8 +71,7 @@ mod imp {
             let needed = DragQueryFileW(handle, 0, std::ptr::null_mut(), 0);
             if needed > 0 {
                 let mut buffer = vec![0u16; needed as usize + 1];
-                let written =
-                    DragQueryFileW(handle, 0, buffer.as_mut_ptr(), buffer.len() as u32);
+                let written = DragQueryFileW(handle, 0, buffer.as_mut_ptr(), buffer.len() as u32);
                 let path = PathBuf::from(String::from_utf16_lossy(&buffer[..written as usize]));
                 if let Ok(guard) = DROPS.lock() {
                     if let Some(sender) = guard.as_ref() {
